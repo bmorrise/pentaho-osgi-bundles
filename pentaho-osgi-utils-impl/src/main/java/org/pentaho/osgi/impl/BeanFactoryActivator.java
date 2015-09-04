@@ -19,9 +19,12 @@ package org.pentaho.osgi.impl;
 
 import org.osgi.framework.BundleActivator;
 import org.osgi.framework.BundleContext;
+import org.osgi.framework.BundleListener;
 import org.osgi.framework.ServiceReference;
+import org.osgi.service.blueprint.container.BlueprintListener;
 import org.osgi.service.cm.ConfigurationAdmin;
 import org.pentaho.osgi.api.BeanFactoryLocator;
+import org.pentaho.osgi.api.BlueprintStateService;
 import org.pentaho.osgi.api.ProxyUnwrapper;
 import org.pentaho.osgi.api.IKarafFeatureWatcher;
 
@@ -32,6 +35,11 @@ public class BeanFactoryActivator implements BundleActivator {
 
   @Override
   public void start( BundleContext bundleContext ) throws Exception {
+    BlueprintStateServiceImpl blueprintServiceImpl = new BlueprintStateServiceImpl( bundleContext );
+    bundleContext
+        .registerService( new String[] { BlueprintListener.class.getName(), BlueprintStateService.class.getName() },
+            blueprintServiceImpl, null );
+
     bundleContext.registerService( ProxyUnwrapper.class.getName(), new ProxyUnwrapperImpl( bundleContext ), null );
     bundleContext.registerService( BeanFactoryLocator.class.getName(), new BeanFactoryLocatorImpl(), null );
     ServiceReference ref = bundleContext.getServiceReference( ConfigurationAdmin.class.getName() );
@@ -39,7 +47,6 @@ public class BeanFactoryActivator implements BundleActivator {
 
     KarafFeatureWatcherImpl karafFeatureWatcher = new KarafFeatureWatcherImpl( bundleContext );
     bundleContext.registerService( IKarafFeatureWatcher.class.getName(), karafFeatureWatcher, null );
-
   }
 
   @Override
@@ -47,4 +54,3 @@ public class BeanFactoryActivator implements BundleActivator {
 
   }
 }
-  

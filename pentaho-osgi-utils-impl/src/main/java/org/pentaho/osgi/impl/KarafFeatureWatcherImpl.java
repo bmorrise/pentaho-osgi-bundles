@@ -18,12 +18,16 @@
 package org.pentaho.osgi.impl;
 
 import org.apache.commons.lang.StringUtils;
+import org.apache.karaf.bundle.core.BundleState;
+import org.apache.karaf.features.BundleInfo;
 import org.apache.karaf.features.Feature;
 import org.apache.karaf.features.FeaturesService;
 import org.osgi.framework.BundleContext;
 import org.osgi.framework.ServiceReference;
 import org.osgi.service.cm.Configuration;
 import org.osgi.service.cm.ConfigurationAdmin;
+import org.osgi.util.tracker.ServiceTracker;
+import org.pentaho.osgi.api.BlueprintStateService;
 import org.pentaho.osgi.api.IKarafFeatureWatcher;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -49,50 +53,75 @@ public class KarafFeatureWatcherImpl implements IKarafFeatureWatcher {
 
     long entryTime = System.currentTimeMillis();
 
-    ServiceReference<FeaturesService> serviceReference = bundleContext.getServiceReference( FeaturesService.class );
-    if(serviceReference != null) {
-    FeaturesService featuresService = bundleContext.getService( serviceReference );
-
-    ServiceReference<ConfigurationAdmin> serviceReference1 =
-        bundleContext.getServiceReference( ConfigurationAdmin.class );
-    ConfigurationAdmin configurationAdmin = bundleContext.getService( serviceReference1 );
-
+    ServiceTracker serviceTracker = new ServiceTracker( bundleContext, FeaturesService.class.getName(), null );
+    serviceTracker.open();
     try {
-      Configuration configuration = configurationAdmin.getConfiguration( "org.apache.karaf.features" );
-      String featuresBoot = (String) configuration.getProperties().get( "featuresBoot" );
-      String[] requiredFeatures = featuresBoot.split( "," );
-
-      // Loop through to see if features are all installed
-      outer:
-      while ( true ) {
-
-        List<String> uninstalledFeatures = new ArrayList<String>();
-
-        for ( String requiredFeature : requiredFeatures ) {
-          requiredFeature = requiredFeature.trim();
-          Feature feature = featuresService.getFeature( requiredFeature );
-          if ( feature != null && featuresService.isInstalled( feature ) == false ) {
-            uninstalledFeatures.add( requiredFeature );
-          }
-        }
-        if ( uninstalledFeatures.size() > 0 ) {
-          if ( System.currentTimeMillis() - timeout > entryTime ) {
-            throw new FeatureWatcherException( "Timed out waiting for Karaf features to install: " + StringUtils.join
-                ( uninstalledFeatures, "," ) );
-          }
-          logger.debug( "KarafFeatureWatcher is waiting for the following features to install: " + StringUtils.join
-              ( uninstalledFeatures, "," ) );
-          Thread.sleep( 100 );
-          continue;
-        }
-        break;
-      }
-
-    } catch ( IOException e ) {
-      throw new FeatureWatcherException( "Error accessing ConfigurationAdmin", e );
-    } catch ( Exception e ) {
-      throw new FeatureWatcherException( "Unknown error in KarafWatcher", e );
+      serviceTracker.waitForService( timeout );
+    } catch ( InterruptedException e ) {
+      logger.debug( "FeaturesService Service Tracker Interrupted" );
     }
-    } 
+
+    ServiceReference<FeaturesService> serviceReference = bundleContext.getServiceReference( FeaturesService.class );
+    if ( serviceReference != null ) {
+      FeaturesService featuresService = bundleContext.getService( serviceReference );
+
+      ServiceReference<ConfigurationAdmin>
+          serviceReference1 =
+          bundleContext.getServiceReference(ConfigurationAdmin.class );
+      ConfigurationAdmin configurationAdmin = bundleContext.getService( serviceReference1 );
+
+      ServiceReference<BlueprintStateService>
+          bundleInterfaceServiceReference =
+          bundleContext.getServiceReference( BlueprintStateService.class );
+      BlueprintStateService blueprintStateService = bundleContext.getService( bundleInterfaceServiceReference );
+
+      try {
+        Configuration configuration = configurationAdmin.getConfiguration( "org.apache.karaf.features" );
+        String featuresBoot = (String) configuration.getProperties().get( "featuresBoot" );
+        String[] requiredFeatures = featuresBoot.split( "," );
+
+        // Loop through to see if features are all installed
+        while ( true ) {
+          List<String> uninstalledFeatures = new ArrayList<String>();
+          Boolean blueprintLoaded = true;
+
+          for ( String requiredFeature : requiredFeatures ) {
+            requiredFeature = requiredFeature.trim();
+            Feature feature = featuresService.getFeature( requiredFeature );
+
+            if ( feature != null ) {
+              for ( BundleInfo bundleInfo : feature.getBundles() ) {
+                if ( blueprintStateService.hasBlueprint( bundleInfo.getLocation() ) ) {
+                  BundleState state = blueprintStateService.getState( bundleInfo.getLocation() );
+                  if ( state != BundleState.Active && state != BundleState.Failure ) {
+                    blueprintLoaded = false;
+                  }
+                }
+              }
+              if ( !featuresService.isInstalled( feature ) ) {
+                uninstalledFeatures.add( requiredFeature );
+              }
+            }
+          }
+
+          if ( uninstalledFeatures.size() > 0 || !blueprintLoaded ) {
+            if ( System.currentTimeMillis() - timeout > entryTime ) {
+              throw new FeatureWatcherException(
+                  "Timed out waiting for Karaf features to install: " + StringUtils.join( uninstalledFeatures, "," ) );
+            }
+            logger.debug( "KarafFeatureWatcher is waiting for the following features to install: " + StringUtils
+                .join( uninstalledFeatures, "," ) );
+            Thread.sleep( 100 );
+            continue;
+          }
+          break;
+        }
+
+      } catch ( IOException e ) {
+        throw new FeatureWatcherException( "Error accessing ConfigurationAdmin", e );
+      } catch ( Exception e ) {
+        throw new FeatureWatcherException( "Unknown error in KarafWatcher", e );
+      }
+    }
   }
 }
